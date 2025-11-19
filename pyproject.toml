@@ -27,7 +27,6 @@ classifiers = [
 ]
 dependencies = [
     "pydantic>=2.0",    
-    "trading-engine-core @ git+https://github.com/venoajie/trading-engine-core.git@v0.2.1",
 
 ]
 
