@@ -1,49 +1,50 @@
-# src/trading_engine_core/notifications/manager.py
-
+# src\shared_utils\notifications\manager.py
 import asyncio
 import aiohttp
 from loguru import logger as log
-from ..security import get_secret  # Corrected relative import
-from .models import SystemAlert, TradeNotification # Corrected relative import
+from trading_engine_core.models import SystemAlert, TradeNotification
 
 class NotificationManager:
-    def __init__(self, session: aiohttp.ClientSession):
+    def __init__(self, session: aiohttp.ClientSession, telegram_token: str = None, telegram_chat_id: str = None):
+        """
+        Initialize with injected credentials.
+        """
         self._session = session
         self.enabled = False
         self._base_url = None
+        self._telegram_chat_id = telegram_chat_id
         self._send_lock = asyncio.Lock()
-        try:
-            self._telegram_bot_token = get_secret("telegram_bot_token")
-            self._telegram_chat_id = get_secret("telegram_chat_id")
+
+        if telegram_token and telegram_chat_id:
             self.enabled = True
-            self._base_url = f"https://api.telegram.org/bot{self._telegram_bot_token}/sendMessage"
+            self._base_url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
             log.info("Telegram notifications are enabled.")
-        except ValueError:
-            log.warning("Telegram notifications are disabled. Secrets not found.")
+        else:
+            log.warning("Telegram notifications are disabled (credentials not provided).")
             self.enabled = False
     
     async def _send_telegram_message(self, text: str):
         if not self.enabled: return
         params = {"chat_id": self._telegram_chat_id, "text": text, "parse_mode": "HTML"}
+        
+        # Use lock to prevent rate limit flooding
         async with self._send_lock:
             for attempt in range(3):
                 try:
                     async with self._session.post(self._base_url, params=params) as response:
                         if response.status == 200:
-                            log.info("Successfully sent Telegram notification.")
                             return
                         elif response.status == 429:
                             error_data = await response.json()
                             retry_after = error_data.get("parameters", {}).get("retry_after", 5)
-                            log.warning(f"Telegram rate limit hit. Retrying after {retry_after}s.")
+                            log.warning(f"Telegram rate limit. Sleeping {retry_after}s.")
                             await asyncio.sleep(retry_after + 1)
                         else:
-                            error_text = await response.text()
-                            log.error(f"Failed to send Telegram notification. Status: {response.status}, Response: {error_text}")
+                            log.error(f"Telegram fail: {response.status}")
                             return
                 except Exception as e:
-                    log.exception(f"Exception sending Telegram notification: {e}")
-                    await asyncio.sleep(5)
+                    log.error(f"Telegram exception: {e}")
+                    await asyncio.sleep(1)
 
     async def send_trade_notification(self, notification: TradeNotification):
         if not self.enabled: return
